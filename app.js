@@ -1,5 +1,5 @@
 import {renderMarkdown} from './markdown.js';
-import {googleApiTransport} from './transport.js?v=1.2.4';
+import {googleApiTransport} from './transport.js?v=1.2.5';
 const $=id=>document.getElementById(id),local=/^(127\.0\.0\.1|localhost)$/.test(location.hostname);
 const apiBase=location.hostname==='wooncer.github.io'?'https://esq-terminal.katerisha.chatgpt.site':'';
 const googleAPI=googleApiTransport('https://script.google.com/macros/s/AKfycbzPmrBVKVKC91HOWNQ2Mav96H4H-OX9OiaPE5er0u2ms5MCT6poZjK_aN3GASIJnByvFQ/exec');

@@ -81,3 +81,9 @@ private relay token when ESQ_GOOGLE_BOOTSTRAP=true; the key never enters the
 GitHub repository or browser assets. Model responses are buffered by Apps
 Script, so the browser displays a completed response rather than streaming
 individual tokens. Cancelling a browser request cannot undo server-side work.
+
+
+Version 1.2.5 fixes the native Apps Script Blob MIME requirement for gzipped
+catalogue data. The status endpoint validates both compressed search indexes
+before reporting a healthy engine. The regression test reproduces the native
+non-null Blob type requirement.
