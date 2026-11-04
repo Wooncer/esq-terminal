@@ -96,3 +96,13 @@ Warehouse parsing now scopes primary product data and preserves explicit
 non-numeric availability such as «Под заказ» instead of treating it as zero.
 
 Version 1.2.7 separates document-only recognition from selection, including requests containing «без подбора». Recognition does not inherit forced selection instructions or invoke warehouse tools.
+
+
+Version 1.2.8 fixes audit regressions: explicit task routing with negation handling,
+validated reusable document context, both pump components required regardless of
+article wording, no silent text-file truncation, request-local tool memoization,
+no additional model pass solely to append live stock, a 60,000-used-token circuit
+breaker and 220,000-character request-context ceiling. The token breaker prevents
+additional calls after the threshold; it is not a billing cap on an in-flight call.
+Each answer shows cumulative usage and model call count. Apps Script preserves
+usage events when a later operation fails. Audit regression suite: 61 tests.
