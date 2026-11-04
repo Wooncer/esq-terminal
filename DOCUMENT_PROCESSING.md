@@ -24,3 +24,5 @@ PDF/фото анализируются по оригиналу. Инструк�
 SheetJS CE 0.20.3 vendored from the npm distribution mirror @e965/xlsx,
 SHA-256 cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41.
 Official distribution and usage: https://docs.sheetjs.com/docs/getting-started/installation/standalone/.
+
+Запрос на одно распознавание не получает инструкций подбора и инструментов склада; отрицание «без подбора» не запускает prepare_selection.
