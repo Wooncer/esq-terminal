@@ -106,3 +106,7 @@ breaker and 220,000-character request-context ceiling. The token breaker prevent
 additional calls after the threshold; it is not a billing cap on an in-flight call.
 Each answer shows cumulative usage and model call count. Apps Script preserves
 usage events when a later operation fails. Audit regression suite: 61 tests.
+
+Version 1.2.9 also handles clause-level negation, including «без складских проверок», in document follow-ups.
+
+Gemini 2.5 Flash-Lite removed from selectable models after the live API rejected it for this account despite returning it in model discovery.
