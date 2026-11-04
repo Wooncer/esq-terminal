@@ -87,3 +87,10 @@ Version 1.2.5 fixes the native Apps Script Blob MIME requirement for gzipped
 catalogue data. The status endpoint validates both compressed search indexes
 before reporting a healthy engine. The regression test reproduces the native
 non-null Blob type requirement.
+
+
+Version 1.2.6 reads XLSX, XLS, XLSM and ODS goods lists on the server,
+including all worksheets, row/cell references, leading zeros and cached formula
+values. Formulas and macros are never executed. See DOCUMENT_PROCESSING.md.
+Warehouse parsing now scopes primary product data and preserves explicit
+non-numeric availability such as «Под заказ» instead of treating it as zero.

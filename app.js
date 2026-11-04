@@ -1,5 +1,5 @@
 import {renderMarkdown} from './markdown.js';
-import {googleApiTransport} from './transport.js?v=1.2.5';
+import {googleApiTransport} from './transport.js?v=1.2.6';
 const $=id=>document.getElementById(id),local=/^(127\.0\.0\.1|localhost)$/.test(location.hostname);
 const apiBase=location.hostname==='wooncer.github.io'?'https://esq-terminal.katerisha.chatgpt.site':'';
 const googleAPI=googleApiTransport('https://script.google.com/macros/s/AKfycbzPmrBVKVKC91HOWNQ2Mav96H4H-OX9OiaPE5er0u2ms5MCT6poZjK_aN3GASIJnByvFQ/exec');
@@ -19,7 +19,7 @@ function renderMessage(m){const el=node('article',undefined,'message '+m.role);e
 function newChat(){if(busy)return toast('Дождитесь ответа или нажмите Стоп');chat=undefined;files=[];renderFiles();render();save();$('prompt').focus()}
 $('newChat').onclick=newChat;$('search').oninput=render;
 function renderFiles(){$('attachments').replaceChildren();files.forEach((f,i)=>{const chip=node('span',undefined,'file-chip');chip.append(node('span',f.name+' · '+(f.size/1024).toFixed(0)+' КБ'));const b=node('button','×');b.type='button';b.ariaLabel='Удалить '+f.name;b.onclick=()=>{files.splice(i,1);renderFiles()};chip.append(b);$('attachments').append(chip)})}
-async function addFiles(list){if(busy)return;for(const f of list){if(files.length>=4){toast('Не более 4 файлов в запросе');break}if(f.size>8*1024*1024){toast(f.name+': максимум 8 МБ');continue}if(files.reduce((s,f)=>s+f.size,0)+f.size>16*1024*1024){toast('Общий размер — до 16 МБ');break}if(!/\.(png|jpe?g|webp|pdf|txt|csv|md|json|docx|xlsx)$/i.test(f.name)){toast('Формат не поддерживается');continue}files.push(f)}renderFiles()}
+async function addFiles(list){if(busy)return;for(const f of list){if(files.length>=4){toast('Не более 4 файлов в запросе');break}if(f.size>8*1024*1024){toast(f.name+': максимум 8 МБ');continue}if(files.reduce((s,f)=>s+f.size,0)+f.size>16*1024*1024){toast('Общий размер — до 16 МБ');break}if(!/\.(png|jpe?g|webp|pdf|txt|csv|md|json|docx|xlsx|xls|xlsm|ods)$/i.test(f.name)){toast('Формат не поддерживается');continue}files.push(f)}renderFiles()}
 $('attach').onclick=()=>$('fileInput').click();$('fileInput').onchange=e=>{addFiles(e.target.files);e.target.value=''};for(const type of ['dragenter','dragover'])$('dropzone').addEventListener(type,e=>{e.preventDefault();$('dropzone').classList.add('drag')});$('dropzone').ondragleave=()=>$('dropzone').classList.remove('drag');$('dropzone').ondrop=e=>{e.preventDefault();$('dropzone').classList.remove('drag');addFiles(e.dataTransfer.files)};
 $('prompt').onpaste=e=>{const attached=[...e.clipboardData.files];if(attached.length){e.preventDefault();addFiles(attached)}};
 $('prompt').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('chatForm').requestSubmit()}};
