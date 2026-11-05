@@ -1,0 +1,317 @@
+diff --git a/package.json b/package.json
+index 36d3a1a..796118b 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "esq-terminal",
+-  "version": "1.2.9",
++  "version": "1.2.10",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/server/gemini.mjs b/server/gemini.mjs
+index 8b41d87..c8fd1e4 100644
+--- a/server/gemini.mjs
++++ b/server/gemini.mjs
+@@ -30,7 +30,7 @@ export function documentContextParts(value){
+  return value.map(text=>({text}));
+ }
+ // Gemini adapter. Tool execution stays on the server, never inside browser code.
+-export const GEMINI_MODELS=['gemini-3.5-flash-lite','gemini-3.8-flash','gemini-2.5-flash'];
++export const GEMINI_MODELS=['gemini-3.5-flash-lite','gemini-3.8-flash'];
+ export function geminiFiles(files){if(!Array.isArray(files)||files.length>4)throw Error('До 4 вложений');let total=0;return files.map(f=>{if(typeof f.name!=='string'||typeof f.data!=='string'||!/^data:[^;]*;base64,[A-Za-z0-9+/=]+$/.test(f.data))throw Error('Некорректное вложение');const base64=f.data.split(',')[1],raw=atob(base64);total+=raw.length;if(raw.length>8*1024*1024||total>16*1024*1024)throw Error('Превышен размер вложений');if(/\.(txt|md|csv|json)$/i.test(f.name)){const text=new TextDecoder().decode(Uint8Array.from(raw,c=>c.charCodeAt(0)));if(text.length>240000)throw Error('Текст файла '+f.name+' превышает 240 000 символов. Разделите документ: строки не обрезаются.');return {text:'Файл '+f.name+':\n'+text};}if(/\.(xlsx|xlsm|xls|ods)$/i.test(f.name))return {text:spreadsheetText(f,Uint8Array.from(raw,c=>c.charCodeAt(0)))};let mime;if(/\.pdf$/i.test(f.name))mime='application/pdf';else if(/\.png$/i.test(f.name))mime='image/png';else if(/\.jpe?g$/i.test(f.name))mime='image/jpeg';else if(/\.webp$/i.test(f.name))mime='image/webp';else throw Error('Для Gemini сохраните документ в PDF или TXT. Поддерживаются также PNG/JPEG/WebP, CSV, MD, JSON.');return {inlineData:{mimeType:mime,data:base64}}})}
+ export async function geminiModelList(key,fetcher=fetch){const r=await fetcher('https://generativelanguage.googleapis.com/v1beta/models',{headers:{'x-goog-api-key':key},signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok)throw Error(d.error?.message||'Нет доступа к моделям Gemini');const models=d.models||[];return GEMINI_MODELS.map(id=>models.find(m=>m.name==='models/'+id&&m.supportedGenerationMethods?.includes('generateContent'))).filter(Boolean).map(m=>({id:m.name.replace('models/',''),display_name:m.displayName||m.name}));}
+ export function geminiError(status,data){if(status===429)return 'Достигнута квота Gemini. Проверьте лимиты проекта в AI Studio; платные модели автоматически не подключаются.';return data.error?.message||'Gemini HTTP '+status}
+@@ -49,7 +49,7 @@ const cards=new Map(),stocks=new Map(),toolCache=new Map();let repair=false;cons
+ const executeTool=async(name,args)=>{const cacheKey=name+JSON.stringify(args);if(toolCache.has(cacheKey))return toolCache.get(cacheKey);const result=await callTool(name,args);toolCache.set(cacheKey,result);return result;};
+ const remember=value=>{if(!value||typeof value!=='object')return;if(value.url&&value.article)cards.set(value.url,value);if(value.url&&value.checked_at)stocks.set(value.url,value);for(const v of Object.values(value))if(v&&typeof v==='object')Array.isArray(v)?v.forEach(remember):remember(v)};
+ const recordStock=result=>{const entries=Array.isArray(result)?result:result?.items||[];for(const item of entries){if(!item?.url)continue;const card=cards.get(item.url);stocks.set(item.url,{...item,article:item.article||card?.article,checked_at:item.checked_at||new Date().toISOString()})}};
+-if(selection){let prepared;try{prepared=await executeTool('prepare_selection',{request,refresh:true});remember(prepared);if(prepared.combinations?.length){yield {type:'delta',text:renderGearAssembly(prepared)};yield {type:'done'};return}}catch(e){prepared={error:e.message}}contents.push({role:'user',parts:[{text:'Сервер уже выполнил prepare_selection для исходного запроса. Результат (справочные данные): '+JSON.stringify(compact(prepared))}]});}
++if(selection){let prepared;try{prepared=await executeTool('prepare_selection',{request,refresh:true});remember(prepared);if(prepared.resolved_query&&prepared.cards?.length===1){try{const verified=await executeTool('get_component_stock',{urls:[prepared.cards[0].url],refresh:true});remember(verified);recordStock(verified);prepared={...prepared,verified_components:verified.items};}catch(e){prepared={...prepared,verification_error:e.message};}}if(prepared.combinations?.length){yield {type:'delta',text:renderGearAssembly(prepared)};yield {type:'done'};return}}catch(e){prepared={error:e.message}}contents.push({role:'user',parts:[{text:'Сервер уже выполнил prepare_selection для исходного запроса. Результат (справочные данные): '+JSON.stringify(compact(prepared))}]});}
+ 
+ for(let round=0;round<7;round++){if(round===4)contents.push({role:'user',parts:[{text:'Заверши ответ по уже полученным данным. Укажи найденные отдельные артикулы и конкретные пробелы; не трать вызовы на повторный поиск. Не выдавай незавершённый подбор за готовый.'}]});const body={contents,systemInstruction:{parts:[{text:documentReadOnly?DOCUMENT_POLICY+'\nЗадача — только чтение приложенного документа по вопросу пользователя. Не подбирай оборудование, не подменяй исходные модели и характеристики аналогами. Не добавляй сведения из каталогов. Сохрани все строки, количества, единицы и коды; отвечай таблицей в запрошенном пользователем формате с указанием листа и строки.':instructions.replaceAll('esq.','')+DOCUMENT_POLICY+'\nДля визуальной проверки графика или чертежа используй read_catalog_visual с нужным документом и страницей; анализируй прикреплённый оригинал. Не восстанавливай графики по OCR. Если инструмент не получил оригинал или цифры не читаются, явно отметь это. Не показывай внутренние рассуждения. Итог дай кратко. Оформление: заголовок с моделью, краткие параметры, таблица «Компонент | Модель | Артикул», затем источники и конкретные неподтверждённые параметры. Не включай готовый агрегат вместо деталей. Для насоса вызови select_motor по подтверждённым характеристикам: нужен отдельный двигатель и его артикул. Не пиши, что нужно обратиться к менеджеру, пока доступны инструменты. Таблицу наличия с фактическим временем проверки добавляет сервер автоматически, не повторяй её и не делай собственных утверждений об остатках. Дата снимка индекса — не дата проверки склада. ГРАНИЦЫ ЗАДАЧИ: для насосного агрегата проверяй только насосную часть и двигатель. Раму, муфту и прочие позиции не добавляй в состав и не требуй их параметров. Не утверждай подтверждённую механическую совместимость без размеров и источников. Не повторяй уже выполненные сервером инструменты.'}]},...(documentReadOnly?{}:{tools:[{functionDeclarations:declarations}]}),...(round>=4&&!documentReadOnly?{toolConfig:{functionCallingConfig:{mode:'NONE'}}}:{}),generationConfig:{maxOutputTokens:6000},store:false};if(usedTokens>=60000)throw Error('Достигнут бюджет 60 000 токенов на запрос. Разделите задачу; платное переключение не выполняется.');if(JSON.stringify(body).length>220000)throw Error('Контекст слишком большой для экономного запроса. Разделите документ.');const r=await fetcher('https://generativelanguage.googleapis.com/v1beta/models/'+data.model+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(body),signal});const result=await r.json();if(!r.ok)throw Error(geminiError(r.status,result));const usage=result.usageMetadata;if(usage)usedTokens+=usage.totalTokenCount||0;if(usage)yield {type:'usage',input:usage.promptTokenCount||0,output:(usage.candidatesTokenCount||0)+(usage.thoughtsTokenCount||0),cached:usage.cachedContentTokenCount||0,total:usage.totalTokenCount||0};const candidate=result.candidates?.[0];if(!candidate||!candidate.content)throw Error('Gemini не вернул ответ: '+(result.promptFeedback?.blockReason||'нет кандидата'));if(candidate.finishReason&&candidate.finishReason!=='STOP')throw Error('Ответ Gemini не завершён: '+candidate.finishReason);const content=candidate.content;const functionParts=(content.parts||[]).filter(p=>p.functionCall);if(!functionParts.length){if(resolvedGear){if(/тормоз|расторм|взрыв/i.test(request)){resolvedGear={...resolvedGear,pending_requirement:'Требуется специальное исполнение двигателя из исходного запроса; базовый комплект не подтверждает тормоз, растормаживание или взрывозащиту.',combinations:resolvedGear.combinations.map(c=>({...c,selection_complete:false}))}}yield {type:'delta',text:renderGearAssembly(resolvedGear)};yield {type:'done'};return}const text=(content.parts||[]).filter(p=>typeof p.text==='string'&&!p.thought).map(p=>p.text).join('');if(!text.trim())throw Error('Пустой ответ Gemini');if(selection){
+  const selected=[...cards.values()].filter(c=>text.includes(c.article));
+@@ -60,7 +60,7 @@ for(let round=0;round<7;round++){if(round===4)contents.push({role:'user',parts:[
+ 
+  }
+  if(round<6&&!repair&&(!selected.length||(wantsPumpAssembly&&!pumpPartsComplete(selected)))){
+- repair=true;contents.push(content,{role:'user',parts:[{text:'Подбор ещё не завершён: укажи точные отдельные артикулы выбранных деталей из инструментов. Для насоса найди двигатель через select_motor; не заменяй его артикулом агрегата. Если параметров недостаточно, конкретно назови недостающие параметры и статус кандидата.'}]});continue;
++ repair=true;contents.push(content,{role:'user',parts:[{text:'Подбор ещё не завершён: укажи точные отдельные артикулы выбранных деталей из инструментов. Двигатель через select_motor требуется только для насосного агрегата с двигателем; если запрошена только насосная часть, двигатель не добавляй. Если параметров недостаточно, конкретно назови недостающие параметры и статус кандидата.'}]});continue;
+  }
+  if(/редуктор|NMR[VW]/i.test(request)&&!resolvedGear){yield {type:'delta',text:'### Подбор комплекта требует продолжения проверки\n\nПодтверждённая строка конфигуратора с актуальными карточками пока не получена. Это не означает, что сборка невозможна.\n\n| Найденная деталь | Артикул |\n| --- | --- |\n'+selected.map(c=>'| '+String(c.title||c.name||'').replace(/[|\n]/g,' ')+' | '+c.article+' |').join('\n')+stockEvidence([...stocks.values()])};yield {type:'done'};return;}const incomplete=wantsPumpAssembly&&!pumpPartsComplete(selected);yield {type:'delta',text:(incomplete?'**Подбор агрегата не завершён:** отдельный двигатель с артикулом не подтверждён.\n\n':'')+text+stockEvidence([...stocks.values()])+(stocks.size?'':'\n\nНаличие не подтверждено: не определена точная карточка комплектующей для онлайн-проверки.')};
+  }else yield {type:'delta',text};yield {type:'done'};return}
+diff --git a/web/esq-engine.js b/web/esq-engine.js
+index efe7a9a..33c8778 100644
+--- a/web/esq-engine.js
++++ b/web/esq-engine.js
+@@ -77,14 +77,15 @@ function supplierComponentType(item){
+ }
+ async function findCards(query,limit=8){
+  if(typeof query!=='string'||query.length<2||query.length>160)throw Error('Запрос от 2 до 160 символов');
+- const data=await assortmentData();const tokens=equipmentTokens(query);const combined=tokens.join('');
++ const canonical=s=>String(s).replace(/(\d)[BV](5|14)(?!\d)/g,'$1B$2').replace(/\./g,'');
++ const data=await assortmentData();const tokens=equipmentTokens(query).map(canonical);const combined=tokens.join('');
+  const pumpDesignationQuery=/^(?:1?D|K|KM|TSN|NMSh|CR)\d/i.test(combined);
+  const ranked=[];
+  for(const item of data.items){
+   const componentType=supplierComponentType(item);
+   if(pumpDesignationQuery&&componentType==='pump_spare')continue;
+-  const body=item.search;const hits=tokens.filter(t=>body.includes(t));
+-  const articleMatch=item.article&&equipmentNorm(item.article)===combined;
++  const body=canonical(item.search);const hits=tokens.filter(t=>body.includes(t));
++  const articleMatch=item.article&&canonical(equipmentNorm(item.article))===combined;
+   if(!articleMatch&&(!hits.length||hits.length<tokens.length))continue;
+   const score=(articleMatch?100:0)+(body.includes(combined)?20:0)+(item.article?5:0)+(item.kind==='product'?5:0)+(componentType==='pump_part'?15:0)-body.length/10000;
+   ranked.push({item,score});
+@@ -237,6 +238,21 @@ async function resolveGearMotor(a,fetcher=fetch,invoke=callTool){
+  combinations.sort((a,b)=>Number(b.selection_complete)-Number(a.selection_complete));return {status:combinations.some(c=>c.selection_complete)?'verified_combination':'requires_engineering_verification',selection_complete:combinations.some(c=>c.selection_complete),match_kind,requested:a,combinations,configurator_rows:rows.map(r=>({id:r.id,motor:r.to_engine_name,pam:r.pam_name,reducer_article:String(r.buhta_gear).trim(),motor_articles:String(r.buhta_engine).trim(),accessories:r.pam_service,accessory_article:r.buhta_service})),notice:'Подбор подтверждён строкой конфигуратора и актуальными карточками; доступность в конфигураторе не заменяет складские остатки. Несовпавшие артикулы не подменять автоматически. B3/B8 — положение агрегата.'};
+ }
+ 
++// Separate the equipment designation from prose before querying the supplier index.
++function supplierModelQuery(request){
++ const text=String(request).replace(/[–—]/g,'-');
++ const patterns=[
++  /\bESQ[-_]\d{3,4}[-_](?:2S|4T)[-_][A-Z0-9]+(?:[.,][0-9]+)?[A-Z]*(?:G\/[A-Z0-9]+P)?/i,
++  /\bNMR[VW]\s*\d{2,3}\s*-\s*\d+(?:[.,]\d+)?\s*\/\s*\d{2,3}[BВ](?:5|14)/i,
++  /\b(?:KA?|RC|R\d*U)\d*\s*-\s*\d+(?:[.,]\d+)?\s*\/\s*\d{2,3}[BВ](?:5|14)/i,
++  /\bDRW\s*\d{3}\s*\/\s*\d{3}/i,
++  /(?:^|[\s:])(НМШ)\s*\d+(?:[.,]\d+)?\s*-\s*\d+\s*-\s*\d+\s*\/\s*\d+/i,
++  /(?:^|[\s:])(?:[12]?Д|КМ|К)\s*\d+\s*[-\/]\s*\d+(?:\s*-\s*\d+)?[абвм]?(?=[\s,.;]|$)/i,
++ ];
++ for(const pattern of patterns){const found=text.match(pattern);if(found)return found[0].trim().replace(/\s*([\/-])\s*/g,'$1').replace(/[Вв](5|14)\b/g,'B$1');}
++ return null;
++}
++
+ async function callTool(name,a){
+  if(name==='check_drive_compatibility')return checkDriveCompatibility(JSON.parse(a.reducer_json),JSON.parse(a.motor_json));
+  if(name==='prepare_selection'){
+@@ -250,15 +266,16 @@ async function callTool(name,a){
+    return {status:'requires_engineering_verification',requested:parsed,additional_requirements,cards:cards.cards,catalog,required_steps:['По таблицам подтвердить точные выходные обороты; затем варианты в пределах ±15%.','Проверить допустимую мощность, коэффициент сервиса, моторный фланец и нужные аксессуары.','Для тормоза и ручного растормаживания проверить отдельное исполнение двигателя.','Подтвердить артикулы и наличие всех комплектующих.'],notice:'Это кандидаты редукторов, а не готовый состав агрегата.'};
+   }
+   const power=request.match(/(\d+(?:[.,]\d+)?)\s*[/]\s*(\d{3,4})/);
+-  if(!pumpRequest&&power&&/двигател|АИР|5АИ|motor/i.test(request)&&!/ESQ|АИМУ|5АМУ|МТК|МТН|ВАО|DIN|IEC|итальян|мал(?:ый|ом)\s+флан/i.test(request)){
++  if(!pumpRequest&&!/редуктор|NMR[VW]|DRW/i.test(request)&&power&&/двигател|АИР|5АИ|motor/i.test(request)&&!/ESQ|АИМУ|5АМУ|МТК|МТН|ВАО|DIN|IEC|итальян|мал(?:ый|ом)\s+флан/i.test(request)){
+    let mount;if(/лапы|лапах|\bB3\b|IM\s*1081/i.test(request))mount='1081';else if(/B35|IM\s*2081/i.test(request))mount='2081';else if(/B5|IM\s*3081/i.test(request))mount='3081';
+    if(!/тормоз|brake/i.test(request))return {status:'motor_candidates',...await callTool('select_motor',{power_kw:Number(power[1].replace(',','.')),rpm:Number(power[2]),...(mount?{mount}:{}),check_stock:true,refresh:a.refresh})};
+   }
+-  const query=request.replace(/^(?:подбери|подберите|нужен|нужна)\s+/i,'').replace(/^(?:насос(?:ный)?(?:\s+агрегат)?|двигатель|редуктор)\s+/i,'').replace(pumpRequest?/\s+(?:с\s+(?:электро)?двигател(?:ем|ём)|без\s+(?:электро)?двигател(?:я)|б\s*[/]\s*дв).*$/i:/$^/,'').trim();
++  const modelQuery=supplierModelQuery(request);
++   const query=modelQuery||request.replace(/^(?:подбери|подберите|нужен|нужна)\s+/i,'').replace(/^(?:насос(?:ный)?(?:\s+агрегат)?|двигатель|редуктор)\s+/i,'').replace(pumpRequest?/\s+(?:с\s+(?:электро)?двигател(?:ем|ём)|без\s+(?:электро)?двигател(?:я)|б\s*[/]\s*дв).*$/i:/$^/,'').trim();
+   const cards=await findCards(query.slice(0,160),6);
+   const category=pumpRequest?'Насосы':undefined;
+   const catalog=await searchCatalog({query:query.slice(0,200),...(category?{category}:{}),limit:3});
+-  return {status:'requires_engineering_verification',request,cards:cards.cards,catalog,...(pumpRequest?{equipment_type:'pump_unit',assembly_requirements:pumpAssemblyRequirements(request)}:{}),stock_checked:false,notice:pumpRequest?'Состав насосного агрегата: только насосная часть и электродвигатель. Подтвердить модель, отдельный артикул и наличие каждой позиции. Данные для других комплектующих не запрашивать. Рабочую точку Q/H проверить по исходному графику, если задана.':'Подбор по источникам. Для мотор-редуктора проверить редуктор, двигатель и требуемые комплектующие; артикул и наличие каждого подтвердить get_component_stock.'};
++  return {status:'requires_engineering_verification',request,resolved_query:modelQuery,cards:cards.cards,catalog,...(pumpRequest?{equipment_type:'pump_unit',assembly_requirements:pumpAssemblyRequirements(request)}:{}),stock_checked:false,notice:pumpRequest?'Состав насосного агрегата: только насосная часть и электродвигатель. Подтвердить модель, отдельный артикул и наличие каждой позиции. Данные для других комплектующих не запрашивать. Рабочую точку Q/H проверить по исходному графику, если задана.':'Подбор по источникам. Для мотор-редуктора проверить редуктор, двигатель и требуемые комплектующие; артикул и наличие каждого подтвердить get_component_stock.'};
+  }
+  if(name==='find_supplier_cards')return findCards(a.query,a.limit);
+  if(name==='get_catalog_source'){
+@@ -323,4 +340,4 @@ function toolSummary(name,result){
+ }
+ function json(value,status=200){return new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}})}
+ 
+-export { callTool, validateArguments, tools, rules, findCards, searchCatalog, catalogSummary, motorCandidates, MOTORS, checkDriveCompatibility, driveFromCard, resolveGearMotor };
++export { supplierModelQuery, callTool, validateArguments, tools, rules, findCards, searchCatalog, catalogSummary, motorCandidates, MOTORS, checkDriveCompatibility, driveFromCard, resolveGearMotor };
+
+diff --git a/tests/supplier-query.test.mjs b/tests/supplier-query.test.mjs
+new file mode 100644
+index 0000000..d7b3230
+--- /dev/null
++++ b/tests/supplier-query.test.mjs
+@@ -0,0 +1,37 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {supplierModelQuery,callTool} from '../web/esq-engine.js';
++import {geminiChat} from '../server/gemini.mjs';
++import {boundedInput,compact} from '../server/protocol.mjs';
++test('supplier search extracts model from prose',async()=>{
++ const query='Подбери частотный преобразователь ESQ-230-4T-4K, 4 кВт, 380 В. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Неизвестные остатки не заменяй нулями.';
++ const result=await callTool('prepare_selection',{request:query});
++ assert.equal(result.resolved_query,'ESQ-230-4T-4K');assert(result.cards.some(c=>c.url.endsWith('/esq_230_4t_4k/')));
++});
++test('gear slash not motor power speed',async()=>{
++ const result=await callTool('prepare_selection',{request:'Подбери мотор-редуктор NMRW110-25/100B5, двигатель 3 кВт, 4 полюса IM3081. Укажи артикулы и наличие.'});
++ assert.equal(result.status,'requires_engineering_verification');assert.equal(result.resolved_query,'NMRW110-25/100B5');assert(result.cards.length>0);
++});
++test('model extraction preserves distinct pump and gear designations',()=>{
++ for(const [request,expected] of [
++ ['Только насосная часть: Насос 1Д 200-90а под 75кВт б/дв','1Д 200-90а'],
++ ['Насос КМ 50-32-125 СД под 2.2кВт','КМ 50-32-125'],
++ ['Насос К 290/30 под 37кВт','К 290/30'],
++ ['Насос НМШ 5-25-4/4 под 1.5кВт','НМШ 5-25-4/4'],
++ ['Редуктор KA47- 19.58/90В5, двигатель 2.2 кВт','KA47-19.58/90B5'],
++ ['Редуктор R37U- 6.67/90В5','R37U-6.67/90B5'],
++ ['DRW 040/063, i=100','DRW 040/063'],
++ ['ESQ-230-2S-0.4K, 220 В','ESQ-230-2S-0.4K'],
++ ])assert.equal(supplierModelQuery(request),expected,request);
++ assert.equal(supplierModelQuery('Подбери насос Q=100 H=40'),null);
++});
++test('unique card verified before model and real stock appended',async()=>{
++ const invoked=[];let modelCalls=0;const url='https://www.elcomspb.ru/retail/invertors/frequency_converters/esq_230_4t_4k/';const events=[];
++ const verified={url,title:'Преобразователь ESQ-230-4T-4K',article:'08.04.304426',stock:{Питер:44,Москва:0,Краснодар:28,Ставрополь:1,'Остальные склады':140},checked_at:'2026-11-04T18:42:37Z'};
++ for await(const e of geminiChat({model:'gemini-3.5-flash-lite',input:[{role:'user',text:'Подбери ESQ-230-4T-4K, укажи наличие'}],files:[]},'test',undefined,{boundedInput,compact,instructions:'Подбор',tools:[],exposed:['get_component_stock'],validateArguments:()=>{},callTool:async(name)=>{invoked.push(name);return name==='prepare_selection'?{resolved_query:'ESQ-230-4T-4K',cards:[{url}]}:{items:[verified]};},fetcher:async(u,o)=>{modelCalls++;assert.deepEqual(invoked,['prepare_selection','get_component_stock']);assert(JSON.parse(o.body).contents.at(-1).parts[0].text.includes('08.04.304426'));return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:'ESQ-230-4T-4K, артикул 08.04.304426'}]}}]});}}))events.push(e);
++ assert.equal(modelCalls,1);assert(events.find(e=>e.type==='delta').text.includes('| 08.04.304426 | 44 | 0 | 28 | 1 | 140 |'));
++});
++test('30 audit designations retain all 27 known cards; DRW remains catalog-only candidate',async()=>{
++ const {readFile}=await import('node:fs/promises');const cases=JSON.parse(await readFile(new URL('./fixtures/audit30-search.json',import.meta.url),'utf8'));
++ for(const c of cases){const r=await callTool('prepare_selection',{request:c.prompt});if(c.url)assert(r.cards.some(x=>x.url===c.url),c.id+' lost expected supplier card');else assert.equal(r.status,'requires_engineering_verification',c.id);}
++});
+
+diff --git a/tests/fixtures/audit30-search.json b/tests/fixtures/audit30-search.json
+new file mode 100644
+index 0000000..dda177c
+--- /dev/null
++++ b/tests/fixtures/audit30-search.json
+@@ -0,0 +1,152 @@
++[
++  {
++    "id": "G01",
++    "prompt": "Подбери мотор-редуктор на базе Редуктор NMRW110-25/100B5 (B,C,E,G), двигатель 3 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/gearbox/wormgears/wgitem/07.01.01.000565-reduktor-nmrw110-25-100b5-b-c-e-g/"
++  },
++  {
++    "id": "G02",
++    "prompt": "Подбери мотор-редуктор на базе Редуктор NMRW040- 5/71B5, двигатель 0.37 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/gearbox/wormgears/wgitem/07.01.01.000007-reduktor-nmrw040-5-71b5/"
++  },
++  {
++    "id": "G03",
++    "prompt": "Подбери мотор-редуктор на базе Редуктор NMRW063- 50/71B5, двигатель 0.37 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/gearbox/wormgears/wgitem/07.01.01.000015-reduktor-nmrw063-50-71b5/"
++  },
++  {
++    "id": "G04",
++    "prompt": "Подбери мотор-редуктор на базе Редуктор KA37-6.8/100В5, двигатель 3 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/gearbox/bevelgear/reduktor-ka37-6-8-100v5/"
++  },
++  {
++    "id": "G05",
++    "prompt": "Подбери мотор-редуктор на базе Редуктор KA47- 19.58/90В5, двигатель 2.2 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/gearbox/bevelgear/reduktor-ka47-19-58-90v5/"
++  },
++  {
++    "id": "G06",
++    "prompt": "Подбери мотор-редуктор на базе Редуктор RC02-54/71B5 (B02), двигатель 0.37 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/gearbox/cylindrical/gear-rc/reduktor-rc02-54-71b5-b02/"
++  },
++  {
++    "id": "G07",
++    "prompt": "Подбери мотор-редуктор на базе Редуктор R37U- 6.67/90В5, двигатель 2.2 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/gearbox/cylindrical/gear-r/07.01.03.000433-reduktor-r37u-6-67-90v5/"
++  },
++  {
++    "id": "P01",
++    "prompt": "Нужна только насосная часть: Насос 1Д 200-90 под 90кВт б/дв, б/р. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/dvuhhod_pumps/02.03.001030-nasos-tsirkulyatsionnyy-dvustoronnego-vkhoda-tipa-/"
++  },
++  {
++    "id": "P02",
++    "prompt": "Нужна только насосная часть: Насос 1Д 200-90а под 75кВт б/дв, б/р. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/dvuhhod_pumps/02.03.001031-nasos-tsirkulyatsionnyy-dvustoronnego-vkhoda-tipa-/"
++  },
++  {
++    "id": "P03",
++    "prompt": "Нужна только насосная часть: Насос 1Д 200-90б под 55кВт б/дв, б/р. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/dvuhhod_pumps/02.03.215673-nasos-tsirkulyatsionnyy-dvustoronnego-vkhoda-tipa-/"
++  },
++  {
++    "id": "P04",
++    "prompt": "Нужна только насосная часть: Насос К 290/30 под 37кВт б/дв, б/р. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/konsolnie_pumps/konsilnie-nasosy/k-290-30/"
++  },
++  {
++    "id": "P05",
++    "prompt": "Нужна только насосная часть: Насос К 100-65-200 СД под 30кВт б/дв, б/р. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/konsolnie_pumps/konsilnie-nasosy/k-100-65-200-sd/"
++  },
++  {
++    "id": "P06",
++    "prompt": "Нужна только насосная часть: Насос КМ 50-32-125 СД под 2.2кВт б/дв. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/konsolnie_pumps/konsolnomonoblochnie-nasosy/km-50-32-125/"
++  },
++  {
++    "id": "P07",
++    "prompt": "Нужна только насосная часть: Насос КМ 65-50-125 СД под 3кВт б/дв. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/konsolnie_pumps/konsolnomonoblochnie-nasosy/km-65-50-125/"
++  },
++  {
++    "id": "P08",
++    "prompt": "Нужна только насосная часть: Насос КМ 80-65-160 С под 7.5кВт б/дв. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/konsolnie_pumps/konsolnomonoblochnie-nasosy/km-80-65-160/"
++  },
++  {
++    "id": "P09",
++    "prompt": "Нужна только насосная часть: Насос НМШ 5-25-4/4 под 1.5кВт б/дв, н/р. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/gear_pumps/02.08.042439-nasos-nmsh-5-25-4-4-pod-1-5kvt-b-dv-n-r/"
++  },
++  {
++    "id": "P10",
++    "prompt": "Нужна только насосная часть: Насос НМШ 5-25-4/4 под 2.2кВт б/дв, н/р. Без электродвигателя; готовый агрегат с мотором не предлагай. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/pumps/gear_pumps/02.08.042440-nasos-nmsh-5-25-4-4-pod-2-2kvt-b-dv-n-r/"
++  },
++  {
++    "id": "F01",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-770-2S-0007 0.75/1.5кВт, 220 В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq-770-2s-0007/"
++  },
++  {
++    "id": "F02",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-770-2S-0015 1.5/2.2кВт, 220 В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq-770-2s-0015/"
++  },
++  {
++    "id": "F03",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-770-2S-0022 2.2/4кВт, 220 В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq-770-2s-0022/"
++  },
++  {
++    "id": "F04",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-770-2S-0040 4/5.5 кВт, 220В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq-770-2s-0040/"
++  },
++  {
++    "id": "F05",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-770-2S-0055 5.5/7.5 кВт, 220В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq-770-2s-0055/"
++  },
++  {
++    "id": "F06",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-230-4T-4K 4кВт, 380В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq_230_4t_4k/"
++  },
++  {
++    "id": "F07",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-230-4T-30K 30кВт, 380В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq-230-4t-30k/"
++  },
++  {
++    "id": "F08",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-230-2S-0.4K 0.4кВт, 220В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq_230_2s_0_4k/"
++  },
++  {
++    "id": "F09",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-230-2S-1.5K 1.5кВт, 220В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq_230_2s_1_5k/"
++  },
++  {
++    "id": "F10",
++    "prompt": "Подбери преобразователь частоты Частотный преобразователь ESQ-230-4T-0.7K 0.75кВт, 380В. Проверь напряжение питания и номинальную мощность; для двойного номинала раздели режимы нагрузки. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": "https://www.elcomspb.ru/retail/invertors/frequency_converters/esq_230_4t_0_7k/"
++  },
++  {
++    "id": "G08",
++    "prompt": "Подбери мотор-редуктор DRW 040/063, i=100, двигатель 0.37 кВт, 4 полюса, IM3081. Для расчёта выходной скорости принять n1=1400 об/мин. Проверь допустимую мощность и передаточные отношения ступеней. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": null
++  },
++  {
++    "id": "G09",
++    "prompt": "Подбери мотор-редуктор DRW 040/090, i=200, двигатель 0.37 кВт, 4 полюса, IM3081. Для расчёта выходной скорости принять n1=1400 об/мин. Проверь допустимую мощность и передаточные отношения ступеней. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": null
++  },
++  {
++    "id": "G10",
++    "prompt": "Подбери мотор-редуктор DRW 063/130, i=500, двигатель 0.75 кВт, 4 полюса, IM3081. Для расчёта выходной скорости принять n1=1400 об/мин. Проверь допустимую мощность и передаточные отношения ступеней. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
++    "url": null
++  }
++]
