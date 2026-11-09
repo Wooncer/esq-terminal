@@ -1,7 +1,7 @@
 {
-  "updated_at": "2026-11-09T19:12:14.113Z",
-  "active_version": "1.2.25",
-  "active_deployment": 23,
+  "updated_at": "2026-11-09T19:21:18.171Z",
+  "active_version": "1.2.26",
+  "active_deployment": 24,
   "frequency_cases_verified_earlier": [
     "F01",
     "F02",
@@ -893,10 +893,31 @@
       "card_url": "https://www.elcomspb.ru/retail/gearbox/wormgears/wgitem/07.01.01.000015-reduktor-nmrw063-50-71b5/",
       "completed": true,
       "api_usage": []
+    },
+    {
+      "id": "G04",
+      "version": "1.2.26",
+      "prompt": "Подбери мотор-редуктор на базе Редуктор KA37-6.8/100В5, двигатель 3 кВт, 4 полюса, IM3081. Нужна комплектная сборка: редуктор и двигатель. Артикулы и наличие компонентов укажи раздельно; проверь совместимость вала и фланца, не объявляй комплект подтверждённым без размерного обоснования. Укажи точный артикул, ссылку на карточку и свежее наличие отдельно: Питер, Москва, Краснодар, Ставрополь, остальные склады. Сохрани статусы «под заказ» и даты поступления; неизвестный остаток не считай нулём. Обоснуй выбор каталогом.",
+      "answer": "### Подбор комплекта требует продолжения проверки\n\nПрямая стыковка требует подтверждения для точных артикулов. Нужно сверить размеры вала и фланца по чертежам или найти это сочетание в конфигураторе Элком.\n\n| Найденная деталь | Артикул |\n| --- | --- |\n| Редуктор KA37-6.8/100В5 | 07.01.06.000080 |\n| Эл.двигатель 5АИ 100 S4 3/1500 IM 3081 | 01.01.213507 |\n\n### Данные карточек и документация\n\n- **07.01.06.000080** — передаточное отношение — 6,8, входной фланец PAM — 100В5. [документация производителя](https://www.elcomspb.ru/upload/iblock/2ed/ulrgu5nzeevwo9dgjcnat91oxxy7qn9g.pdf)\n- **01.01.213507** — мощность, кВт — 3, полюсов — 4, исполнение — 3081\n\n### Наличие — проверка сайта\n\n| Артикул | Питер | Москва | Краснодар | Ставрополь | Остальные |\n| --- | ---: | ---: | ---: | ---: | ---: |\n| 07.01.06.000080 | не подтверждено | не подтверждено | не подтверждено | не подтверждено | не подтверждено |\n| 01.01.213507 | с 10 ноя | 27 | 0 | 0 | 23 |\n\n- [07.01.06.000080](https://www.elcomspb.ru/retail/gearbox/bevelgear/reduktor-ka37-6-8-100v5/): время обращения 2026-11-09T19:20:17.815Z; дата остатков не указана поставщиком.\n- [01.01.213507](https://www.elcomspb.ru/retail/electric_engines/general-purpose_engines/5ai/5ai-100-s4-im3081/): время обращения 2026-11-09T19:20:19.933Z; дата остатков 09.11.2026.",
+      "finished_at": "2026-11-09T19:20:29.446Z",
+      "independent_check": {
+        "pass": true,
+        "scope": "Confirmed component cards, five stock columns, verified manufacturer documentation and explicit fit gap",
+        "gearbox_compatibility": "unverified",
+        "configurator_nearby_rows": [
+          122106,
+          122115
+        ],
+        "nearby_variant": "KA37B on feet, no exact KA37 part number",
+        "verified_components": [
+          "07.01.06.000080",
+          "01.01.213507"
+        ],
+        "reducer_stock_unknown": true
+      }
     }
   ],
   "remaining_cases": [
-    "G04",
     "G05",
     "G06",
     "G07",
@@ -912,5 +933,5 @@
       "G03"
     ]
   },
-  "checkpoint": "23 of 30 passed across production versions; G04 independent comparison in progress."
+  "checkpoint": "24 of 30 production comparisons completed across releases. G04's exact mechanical fit remains unverified; component cards, stock and supplier documentation were verified."
 }
