@@ -6,6 +6,60 @@ const googleAPI=googleApiTransport('https://script.google.com/macros/s/AKfycbzPm
 const apiFetch=(path,options={})=>apiBase?googleAPI(path,options):fetch(path,{...options,credentials:'same-origin'});
 const uuid=()=>crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
 let db,state={version:1,profiles:[{id:uuid(),name:'Личный профиль',budget:0,used:0,chats:[]}]},profile,chat,files=[],busy=false,abort,server={connected:false},toastTimer,connectionPromise;
+const conversation = $('conversation');
+const scrollDown = $('chatScrollDown');
+const scrollBack = $('chatScrollBack');
+const followDelay = 30000;
+let renderedChat, following = true, returnTop = null, followTimer;
+let observedTop = conversation.scrollTop;
+
+function atChatBottom(){
+ return conversation.scrollHeight - conversation.clientHeight - conversation.scrollTop <= 2;
+}
+function updateScrollButtons(){
+ scrollDown.hidden = following || atChatBottom();
+ scrollBack.hidden = returnTop === null;
+}
+function setChatScroll(top){
+ conversation.scrollTop = top;
+ observedTop = conversation.scrollTop;
+ updateScrollButtons();
+}
+function followChatBottom(){
+ clearTimeout(followTimer);
+ if(!atChatBottom()) returnTop = conversation.scrollTop;
+ following = true;
+ setChatScroll(conversation.scrollHeight);
+}
+function waitBeforeFollowing(){
+ clearTimeout(followTimer);
+ followTimer = setTimeout(followChatBottom, followDelay);
+}
+conversation.addEventListener('scroll', ()=>{
+ const top = conversation.scrollTop;
+ if(top === observedTop) return;
+ observedTop = top;
+ following = atChatBottom();
+ if(following) clearTimeout(followTimer);
+ else waitBeforeFollowing();
+ updateScrollButtons();
+}, {passive:true});
+scrollDown.onclick = followChatBottom;
+scrollBack.onclick = ()=>{
+ if(returnTop === null) return;
+ const top = returnTop;
+ returnTop = null;
+ following = false;
+ setChatScroll(top);
+ waitBeforeFollowing();
+};
+const conversationResize = new ResizeObserver(()=>{
+ if(following) setChatScroll(conversation.scrollHeight);
+ else updateScrollButtons();
+});
+conversationResize.observe(conversation);
+conversationResize.observe($('messages'));
+
 const req=r=>new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
 async function init(){try{db=await new Promise((resolve,reject)=>{const r=indexedDB.open('esq-terminal-v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('state');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});const loaded=await req(db.transaction('state').objectStore('state').get('workspace'));if(loaded?.version===1&&loaded.profiles?.length)state=loaded}catch{toast('Хранилище недоступно: история сохраняется только до закрытия страницы')}
 profile=state.profiles.find(p=>p.id===state.activeProfile)||state.profiles[0];chat=profile.chats.find(c=>c.id===profile.activeChat);render();await status();}
@@ -13,11 +67,21 @@ async function save(){state.activeProfile=profile.id;profile.activeChat=chat?.id
 function toast(s){$('toast').textContent=s;$('toast').style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').style.display='none',6000)}
 function node(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
 function safeLink(url){try{const u=new URL(url);return u.protocol==='https:'?u.href:null}catch{return null}}
-function render(){const h=$('history');h.replaceChildren();const q=$('search').value.toLowerCase();for(const c of [...profile.chats].reverse().filter(c=>c.title.toLowerCase().includes(q))){const b=node('button',c.title,'history-item'+(c.id===chat?.id?' selected':''));b.append(node('small',new Date(c.created).toLocaleDateString('ru-RU')));b.onclick=()=>{if(busy)return toast('Дождитесь ответа или нажмите Стоп');chat=c;render();save();$('sidebar').classList.remove('open')};h.append(b)}if(!h.children.length)h.append(node('p',q?'Совпадений нет':'Здесь появятся ваши запросы. История сохраняется автоматически.','history-empty'));$('profileName').textContent=profile.name;document.querySelector('.avatar').textContent=profile.name[0].toUpperCase();document.querySelector('.breadcrumb b').textContent=chat?.title.slice(0,32)||'Новый запрос';$('welcome').hidden=!!chat?.messages.length;$('messages').replaceChildren();for(const m of chat?.messages||[])renderMessage(m);const ps=$('profiles');ps.replaceChildren();for(const p of state.profiles){const o=node('option',p.name);o.value=p.id;ps.append(o)}ps.value=profile.id;$('budget').value=profile.budget||'';renderUsage();}
+function renderHistory(){const h=$('history');h.replaceChildren();const q=$('search').value.toLowerCase();for(const c of [...profile.chats].reverse().filter(c=>c.title.toLowerCase().includes(q))){const b=node('button',c.title,'history-item'+(c.id===chat?.id?' selected':''));b.append(node('small',new Date(c.created).toLocaleDateString('ru-RU')));b.onclick=()=>{if(busy)return toast('Дождитесь ответа или нажмите Стоп');chat=c;render();save();$('sidebar').classList.remove('open')};h.append(b)}if(!h.children.length)h.append(node('p',q?'Совпадений нет':'Здесь появятся ваши запросы. История сохраняется автоматически.','history-empty'));}
+function render(){renderHistory();$('profileName').textContent=profile.name;document.querySelector('.avatar').textContent=profile.name[0].toUpperCase();document.querySelector('.breadcrumb b').textContent=chat?.title.slice(0,32)||'Новый запрос';$('welcome').hidden=!!chat?.messages.length;const previousTop = conversation.scrollTop;
+if(renderedChat !== chat){
+ clearTimeout(followTimer);
+ following = true;
+ returnTop = null;
+ renderedChat = chat;
+}
+$('messages').replaceChildren();
+for(const m of chat?.messages||[])renderMessage(m);
+setChatScroll(following ? conversation.scrollHeight : previousTop);const ps=$('profiles');ps.replaceChildren();for(const p of state.profiles){const o=node('option',p.name);o.value=p.id;ps.append(o)}ps.value=profile.id;$('budget').value=profile.budget||'';renderUsage();}
 function renderUsage(){$('usage').textContent='Использовано: '+Number(profile.used||0).toLocaleString('ru-RU')+' токенов';$('remaining').textContent=profile.budget?'Локальный бюджет: '+Math.max(0,profile.budget-(profile.used||0)).toLocaleString('ru-RU'):(server.quotas?.[$('models').value]?.rpd?'Общая квота Gemini: '+server.quotas[$('models').value].rpd+' API-запросов/сутки':'Остаток квоты: нет данных');}
 function renderMessage(m){const el=node('article',undefined,'message '+m.role);el.append(node('div',m.role==='user'?'ВЫ / ЗАПРОС':'GEMINI / ESQ','message-role'));for(const f of m.files||[]){const b=node('span','▧ '+f.name,'file-chip');el.append(b)}const content=node('div',undefined,'message-content');if(m.role==='assistant')renderMarkdown(content,m.text||'');else content.textContent=m.text||'';el.append(content);if(m.meta)el.append(node('div',m.meta,'message-meta'));$('messages').append(el);return el}
 function newChat(){if(busy)return toast('Дождитесь ответа или нажмите Стоп');chat=undefined;files=[];renderFiles();render();save();$('prompt').focus()}
-$('newChat').onclick=newChat;$('search').oninput=render;
+$('newChat').onclick=newChat;$('search').oninput=renderHistory;
 function renderFiles(){$('attachments').replaceChildren();files.forEach((f,i)=>{const chip=node('span',undefined,'file-chip');chip.append(node('span',f.name+' · '+(f.size/1024).toFixed(0)+' КБ'));const b=node('button','×');b.type='button';b.ariaLabel='Удалить '+f.name;b.onclick=()=>{files.splice(i,1);renderFiles()};chip.append(b);$('attachments').append(chip)})}
 async function addFiles(list){if(busy)return;for(const f of list){if(files.length>=4){toast('Не более 4 файлов в запросе');break}if(f.size>8*1024*1024){toast(f.name+': максимум 8 МБ');continue}if(files.reduce((s,f)=>s+f.size,0)+f.size>16*1024*1024){toast('Общий размер — до 16 МБ');break}if(!/\.(png|jpe?g|webp|pdf|txt|csv|md|json|xlsx|xls|xlsm|ods)$/i.test(f.name)){toast('Формат не поддерживается');continue}files.push(f)}renderFiles()}
 $('attach').onclick=()=>$('fileInput').click();$('fileInput').onchange=e=>{addFiles(e.target.files);e.target.value=''};for(const type of ['dragenter','dragover'])$('dropzone').addEventListener(type,e=>{e.preventDefault();$('dropzone').classList.add('drag')});$('dropzone').ondragleave=()=>$('dropzone').classList.remove('drag');$('dropzone').ondrop=e=>{e.preventDefault();$('dropzone').classList.remove('drag');addFiles(e.dataTransfer.files)};
@@ -27,7 +91,7 @@ for(const b of document.querySelectorAll('[data-prompt]'))b.onclick=()=>{$('prom
 $('chatForm').onsubmit=async e=>{e.preventDefault();if(busy)return;const text=$('prompt').value.trim();if(!text&&!files.length)return;const mode='chatgpt';if(connectionPromise||!server.connected||!$('models').value){$('notice').textContent='Подключаем Gemini…';await status();$('notice').textContent='';if(busy)return;if(!server.connected||!$('models').value)return toast(local?'Подключите нейросеть в настройках':(server.lastError||'Список моделей Gemini недоступен. Откройте настройки для подробностей.'))}
 if(mode==='chatgpt'&&profile.budget&&profile.used>=profile.budget)return toast('Локальный бюджет исчерпан. Измените его в настройках.');if(!chat){chat={id:uuid(),title:(text||files[0].name).slice(0,70),created:Date.now(),messages:[]};profile.chats.push(chat)}const currentChat=chat,currentProfile=profile,attached=[...files];const user={role:'user',text:text||'Проанализируй вложения',files:attached,mode};currentChat.messages.push(user);$('prompt').value='';files=[];renderFiles();busy=true;render();await save();$('send').hidden=true;$('stop').hidden=false;$('notice').textContent='ESQ проверяет запрос…';abort=new AbortController();const bot={role:'assistant',mode,text:'',cards:[],sources:[]};const el=renderMessage(bot);el.classList.add('pending');
 try{{const input=currentChat.messages.filter(m=>!m.error).slice(-8).map(m=>({role:m.role,text:m.text}));const payload={input,documentContext:currentChat.documentContext,model:$('models').value,files:await Promise.all(attached.map(fileData))};const response=await apiFetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-ESQ-Session':server.csrf},body:JSON.stringify(payload),signal:abort.signal});if(!response.ok){const error=await response.json();throw Error(error.error||'Ошибка подключения')}const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',completed=false;while(true){const {done,value}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});let nl;while((nl=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,nl);buffer=buffer.slice(nl+1);if(!line)continue;const event=JSON.parse(line);if(event.type==='document_context'){currentChat.documentContext=event.parts;}else if(event.type==='delta'){bot.text+=event.text;renderMarkdown(el.querySelector('.message-content'),bot.text)}else if(event.type==='usage'){currentProfile.used=(currentProfile.used||0)+event.total;bot.usage=bot.usage||{input:0,output:0,cached:0,total:0,calls:0};for(const k of ['input','output','cached','total'])bot.usage[k]+=event[k]||0;bot.usage.calls++;renderUsage();bot.meta=`Всего за запрос: ${bot.usage.total} токенов · ${bot.usage.calls} обращ. · ${bot.usage.input} вход · ${bot.usage.output} выход · ${bot.usage.cached} из кэша`}else if(event.type==='done')completed=true;else if(event.type==='error')throw Error(event.message)}if(done)break}if(!completed)throw Error('Соединение завершилось без подтверждения ответа');}}
-catch(err){bot.error=true;bot.text+=(bot.text?'\n\n':'')+(err.name==='AbortError'?'Запрос остановлен. Часть токенов могла быть использована.':'Ошибка: '+err.message);bot.meta='При обрыве полный расход может быть неизвестен.'}finally{currentChat.messages.push(bot);busy=false;$('send').hidden=false;$('stop').hidden=true;$('notice').textContent='';render();await save();$('conversation').scrollTop=$('conversation').scrollHeight;}}
+catch(err){bot.error=true;bot.text+=(bot.text?'\n\n':'')+(err.name==='AbortError'?'Запрос остановлен. Часть токенов могла быть использована.':'Ошибка: '+err.message);bot.meta='При обрыве полный расход может быть неизвестен.'}finally{currentChat.messages.push(bot);busy=false;$('send').hidden=false;$('stop').hidden=true;$('notice').textContent='';render();await save();}}
 async function fileData(f){return{name:f.name,type:f.type,data:await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.readAsDataURL(f)})}}
 $('stop').onclick=()=>abort?.abort();
 function status(){if(connectionPromise)return connectionPromise;connectionPromise=loadConnection().finally(()=>{connectionPromise=undefined});return connectionPromise}
