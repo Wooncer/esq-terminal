@@ -9,7 +9,8 @@
 
 
 .conversation-pane{position:relative;display:flex;flex:1;min-height:0}
-.chat-scroll-controls{position:absolute;right:7px;bottom:10px;display:grid;gap:5px}
-.chat-scroll-controls button{width:27px;height:27px;padding:0;border:1px solid var(--border);border-radius:7px;background:var(--panel);color:var(--muted);font:inherit;font-size:15px;line-height:1;cursor:pointer}
-.chat-scroll-controls button:hover,.chat-scroll-controls button:focus-visible{border-color:var(--muted);color:var(--text)}
-@media(max-width:760px){#conversation{padding-right:39px}}
+.chat-scroll-controls{position:absolute;right:max(7px,calc((100% - 820px)/2 - 44px));top:50%;transform:translateY(-50%);display:grid;gap:5px}
+.chat-scroll-controls button{width:27px;height:27px;padding:0;border:0;border-radius:6px;background:var(--green);color:#182119;font:inherit;font-size:15px;line-height:1;cursor:pointer}
+.chat-scroll-controls button:hover{filter:brightness(1.08)}
+.chat-scroll-controls button:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+#conversation{padding-right:max(39px,var(--conversation-padding,36px))}
